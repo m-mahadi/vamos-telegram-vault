@@ -60,6 +60,12 @@ def parse_caption(caption: str | None) -> dict[str, str]:
         field = aliases.get(normalized_key)
         if field and value.strip():
             parsed[field] = value.strip()
+
+    # Pick up #hashtags anywhere in the caption — how people naturally tag clips.
+    hashtags = re.findall(r"(?<!\w)#([A-Za-z0-9][\w-]*)", caption)
+    if hashtags:
+        merged = ",".join(filter(None, [parsed.get("tags"), ",".join(hashtags)]))
+        parsed["tags"] = merged
     return parsed
 
 

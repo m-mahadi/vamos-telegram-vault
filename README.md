@@ -10,9 +10,9 @@ SQLite catalog that future tools can search, export, and build on.
 | --- | --- |
 | ![Shot Board](docs/screenshots/01-shot-board.png) | ![Catalog](docs/screenshots/02-catalog.png) |
 
-| Lossless guide (built in) | Upload originals |
+| Getting-started guide (built in) | Upload originals |
 | --- | --- |
-| ![Lossless guide](docs/screenshots/03-lossless-guide.png) | ![Upload originals](docs/screenshots/04-upload.png) |
+| ![Getting-started guide](docs/screenshots/03-getting-started.png) | ![Upload originals](docs/screenshots/04-upload.png) |
 
 ## The Quality Rule (zero compression)
 
@@ -74,7 +74,13 @@ More detail: [docs/github-scan.md](docs/github-scan.md)
 - **Lossless detection:** every clip is tagged ORIGINAL or COMPRESSED so you
   always know whether Telegram kept your full-quality file.
 - **In-app guide** for sending lossless clips from iPhone/Android to Saved
-  Messages, plus a one-screen onboarding banner until Telegram is connected.
+  Messages, shown on first run (with "don't show again") and always available
+  from the **?** button; plus a one-screen onboarding banner until connected.
+- **Find footage fast:** newest-first by default, with sort (name / size /
+  rating) and group-by project or shoot date.
+- **Captions become metadata:** when you caption a clip on Telegram, sync turns
+  `#hashtags` into tags, `Key: value` lines (Project, Scene, Tags…) into fields,
+  and any other text into searchable notes.
 - Guided Telegram setup inside the app, including a button that opens
   <https://my.telegram.org/apps>.
 - Auto-sync from Telegram into the local catalog while the app is open.

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import threading
+import time
 import traceback
 import webbrowser
 from pathlib import Path
@@ -36,7 +38,8 @@ from .workflows import (
 
 
 API_URL = "https://my.telegram.org/apps"
-AUTOSYNC_MS = 5 * 60 * 1000
+AUTOSYNC_MS = 3 * 60 * 1000
+FOCUS_SYNC_COOLDOWN = 60.0  # seconds; sync on window refocus, but not more often than this
 
 # ---------------------------------------------------------------------------
 # Design tokens — a calm dark "editor" palette videographers feel at home in.
@@ -263,101 +266,130 @@ def make_badge(parent: tk.Widget, text: str, fg: str, bg: str) -> tk.Label:
 # Dialogs
 # ---------------------------------------------------------------------------
 class HelpDialog(tk.Toplevel):
-    """The "how do I keep zero compression" guide — the heart of the workflow."""
+    """Scrollable getting-started guide — setup, lossless, finding footage, metadata."""
 
     def __init__(self, app: "VamosDesktopApp"):
         super().__init__(app.root)
         self.app = app
-        self.title("How to store clips with zero compression")
-        self.geometry("680x640")
+        self.title("Getting started — Vamos Vault")
+        self.geometry("720x700")
         self.configure(bg=BG)
         self.transient(app.root)
         self.grab_set()
 
-        wrap = tk.Frame(self, bg=BG)
-        wrap.pack(fill="both", expand=True, padx=22, pady=20)
+        # Footer stays pinned at the bottom.
+        footer = tk.Frame(self, bg=SURFACE)
+        footer.pack(side="bottom", fill="x")
+        self.dont_show = BooleanVar(value=app.welcome_hidden())
+        ttk.Checkbutton(
+            footer, text="Don't show this automatically (always available via the ? button)",
+            variable=self.dont_show, style="Card.TCheckbutton",
+        ).pack(side="left", padx=16, pady=12)
+        ttk.Button(footer, text="Close", style="Primary.TButton", command=self._close).pack(side="right", padx=16, pady=12)
 
-        tk.Label(wrap, text="Keep your footage lossless", font=FONT_H1, bg=BG, fg=TEXT).pack(anchor="w")
+        # Scrollable body.
+        canvas = tk.Canvas(self, bg=BG, highlightthickness=0)
+        sb = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        body = tk.Frame(canvas, bg=BG)
+        win = canvas.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width))
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", lambda ev: canvas.yview_scroll(int(-ev.delta / 120), "units")))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+
+        wrap = tk.Frame(body, bg=BG)
+        wrap.pack(fill="both", expand=True, padx=22, pady=18)
+        tk.Label(wrap, text="Getting started", font=FONT_H1, bg=BG, fg=TEXT).pack(anchor="w")
         tk.Label(
             wrap,
-            text="Telegram only keeps your exact, full-quality file when you send it as a FILE.\n"
-            "Sent as a normal video, your phone compresses it BEFORE it ever reaches Telegram —\n"
-            "and nothing on the PC can undo that. So always send as a file. It is one extra tap.",
-            font=FONT,
-            bg=BG,
-            fg=MUTED,
-            justify="left",
-        ).pack(anchor="w", pady=(8, 16))
+            text="Store full-quality footage on Telegram and pull it back to edit. Here is the whole flow.",
+            font=FONT_SM, bg=BG, fg=MUTED,
+        ).pack(anchor="w", pady=(6, 14))
 
-        self._step_card(
+        self._card(wrap, "1 · Connect Telegram", [
+            "Click Setup in the top bar (or the button below).",
+            "Open the Telegram API page, sign in, create an app, copy api_id + api_hash.",
+            "Paste them, pick where to store clips (Saved Messages = “me”, or a private channel),",
+            "    then Save + Connect and enter the login code Telegram sends you.",
+        ])
+        ttk.Button(wrap, text="Open Telegram setup", style="Primary.TButton",
+                   command=lambda: (self.destroy(), app.open_setup_dialog())).pack(anchor="w", pady=(0, 12))
+
+        tk.Label(
             wrap,
-            "On iPhone",
-            [
-                "Open Telegram and go to Saved Messages (or your private vault channel).",
-                "Tap the paperclip / attachment icon.",
-                "Choose File, then browse and pick your clip.",
-                "If the video is only in Photos: select it in the photo grid, tap the … (More)\n"
-                "    menu, and choose “Send as File”.",
-                "Send. It uploads at full original quality.",
-            ],
-        )
-        self._step_card(
+            text="2 · Send clips with ZERO compression",
+            font=FONT_H2, bg=BG, fg=TEXT,
+        ).pack(anchor="w", pady=(4, 2))
+        tk.Label(
             wrap,
-            "On Android",
-            [
-                "Open Telegram and go to Saved Messages (or your private vault channel).",
-                "Tap the paperclip / attachment icon, then File.",
-                "Pick your clip (Gallery or internal storage).",
-                "Or, in the Gallery picker, tap the ⋮ menu and choose “Send as file”.",
-                "Send. It uploads at full original quality.",
-            ],
-        )
-        self._step_card(
-            wrap,
-            "From this PC",
-            [
-                "Click Upload in the top bar, add files or a whole shoot folder, and send.",
-                "PC uploads are always sent as files, so they are always lossless.",
-            ],
-        )
+            text="Telegram only keeps your exact file when it is sent as a FILE. Sent as a normal video,\n"
+            "your phone compresses it before it reaches Telegram — nothing on the PC can undo that.",
+            font=FONT_SM, bg=BG, fg=MUTED, justify="left",
+        ).pack(anchor="w", pady=(0, 8))
+        self._card(wrap, "On iPhone", [
+            "Open Telegram → Saved Messages (or your private vault channel).",
+            "Tap the paperclip / attachment icon → File, then pick your clip.",
+            "If it is only in Photos: select it, tap the … (More) menu → “Send as File”.",
+            "Send. It uploads at full original quality.",
+        ])
+        self._card(wrap, "On Android", [
+            "Open Telegram → Saved Messages (or your private vault channel).",
+            "Tap the paperclip / attachment icon → File, then pick your clip.",
+            "Or, in the Gallery picker, tap the ⋮ menu → “Send as file”.",
+            "Send. It uploads at full original quality.",
+        ])
+        self._card(wrap, "From this PC", [
+            "Click Upload in the top bar, add files or a whole shoot folder, and send.",
+            "PC uploads are always sent as files, so they are always lossless.",
+        ])
+
+        self._card(wrap, "3 · Find your footage fast", [
+            "Search by name, project, tag, scene, location, or person.",
+            "Use the left sidebar: Originals, Compressed, Telegram archive, Downloaded, Done, Projects.",
+            "Sort (newest first by default, or name / size / rating) and Group by project or shoot date.",
+            "Every clip is tagged ORIGINAL (green) or COMPRESSED (amber) at a glance.",
+        ])
+
+        self._card(wrap, "4 · Add metadata (nothing is renamed on Telegram)", [
+            "Select clips → Metadata to set project, tags, camera, scene, rating, etc. — stored locally.",
+            "Uploading from this PC writes all of that into the Telegram caption automatically.",
+            "From your phone, just type a caption when you send the clip — Vamos reads it on sync:",
+            "      • #hashtags become tags",
+            "      • lines like  Project: Dhaka Vlog   Scene: rooftop   Tags: street  fill those fields",
+            "      • any other text becomes searchable notes",
+        ])
+
+        self._card(wrap, "5 · Download & finish", [
+            "Select clips → Download for editing to pull the originals into a folder.",
+            "Export ZIP also writes a metadata sheet for handoff.",
+            "When you are done, Finish marks them complete and can clean up local or Telegram copies.",
+        ])
 
         tip = tk.Frame(wrap, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER)
-        tip.pack(fill="x", pady=(14, 0))
+        tip.pack(fill="x", pady=(8, 0))
+        tk.Label(tip, text="How to tell it worked", font=FONT_BD, bg=SURFACE, fg=ACCENT).pack(anchor="w", padx=12, pady=(10, 2))
         tk.Label(
             tip,
-            text="How to tell it worked",
-            font=FONT_BD,
-            bg=SURFACE,
-            fg=ACCENT,
-        ).pack(anchor="w", padx=12, pady=(10, 2))
-        tk.Label(
-            tip,
-            text="A clip sent correctly keeps its real name (e.g. IMG_1234.MOV) and Vamos tags it\n"
-            "ORIGINAL (green). A compressed one shows up as “Video” and Vamos tags it\n"
-            "COMPRESSED (amber) so you always know. Use the Compressed view in the sidebar to\n"
-            "spot anything that slipped through, then re-send it as a file.",
-            font=FONT_SM,
-            bg=SURFACE,
-            fg=MUTED,
-            justify="left",
+            text="A clip sent as a file keeps its real name (e.g. IMG_1234.MOV) and Vamos tags it ORIGINAL.\n"
+            "A compressed one arrives as “Video” and is tagged COMPRESSED — open the Compressed view\n"
+            "in the sidebar to find and re-send anything that slipped through.",
+            font=FONT_SM, bg=SURFACE, fg=MUTED, justify="left",
         ).pack(anchor="w", padx=12, pady=(0, 12))
 
-        ttk.Button(wrap, text="Got it", style="Primary.TButton", command=self.destroy).pack(anchor="e", pady=(18, 0))
-
-    def _step_card(self, parent: tk.Widget, title: str, steps: list[str]) -> None:
+    def _card(self, parent: tk.Widget, title: str, steps: list[str]) -> None:
         card = tk.Frame(parent, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER)
         card.pack(fill="x", pady=(0, 10))
         tk.Label(card, text=title, font=FONT_BD, bg=SURFACE, fg=TEXT).pack(anchor="w", padx=12, pady=(10, 4))
-        for i, step in enumerate(steps, start=1):
-            tk.Label(
-                card,
-                text=f"{i}.  {step}",
-                font=FONT_SM,
-                bg=SURFACE,
-                fg=MUTED,
-                justify="left",
-            ).pack(anchor="w", padx=14, pady=1)
+        for step in steps:
+            tk.Label(card, text=f"•  {step}", font=FONT_SM, bg=SURFACE, fg=MUTED, justify="left").pack(anchor="w", padx=14, pady=1)
         tk.Frame(card, bg=SURFACE, height=8).pack()
+
+    def _close(self) -> None:
+        self.app.set_welcome_hidden(self.dont_show.get())
+        self.destroy()
 
 
 class UploadDialog(tk.Toplevel):
@@ -863,12 +895,18 @@ class VamosDesktopApp:
         self._nav_rows: list[tuple[tuple[str, str | None], tk.Frame, tk.Label, tk.Label]] = []
         self._cards: dict[str, dict] = {}
         self._gallery_columns = 0
+        self._thumb_cache: dict[tuple, object] = {}
+        self._board_dirty = False
+        self._active_tab = "board"
+        self._last_sync = 0.0
         self._search_placeholder = "Search clips, projects, tags, scenes, people…"
         self._search_active = False
 
         self.search_var = StringVar()
         self.project_var = StringVar(value="")
         self.status_var = StringVar(value="")
+        self.sort_var = StringVar(value="Newest")
+        self.group_var = StringVar(value="None")
         self.auto_sync_var = BooleanVar(value=True)
         self.status_text = StringVar(value="Ready")
         self.target_var = StringVar(value=self.config["telegram"]["target"])
@@ -881,6 +919,8 @@ class VamosDesktopApp:
         self._build_ui()
         self.refresh_assets()
         self.root.after(1200, self.maybe_auto_sync)
+        if not self.welcome_hidden():
+            self.root.after(500, self.show_help)
 
     # -- UI construction ----------------------------------------------------
     def _build_ui(self) -> None:
@@ -1052,17 +1092,31 @@ class VamosDesktopApp:
         self.search_entry.bind("<FocusOut>", self._search_focus_out)
         self.search_var.trace_add("write", lambda *_: self.populate())
 
-        self.project_combo = ttk.Combobox(toolbar, textvariable=self.project_var, state="readonly", width=20)
+        self.project_combo = ttk.Combobox(toolbar, textvariable=self.project_var, state="readonly", width=18)
         self.project_combo.grid(row=0, column=1, padx=(0, 8))
-        self.status_combo = ttk.Combobox(toolbar, textvariable=self.status_var, state="readonly", width=14)
+        self.status_combo = ttk.Combobox(toolbar, textvariable=self.status_var, state="readonly", width=12)
         self.status_combo.grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(toolbar, text="Select view", style="Ghost.TButton", command=self.select_visible).grid(row=0, column=3)
+        self.sort_combo = ttk.Combobox(
+            toolbar, textvariable=self.sort_var, state="readonly", width=12,
+            values=["Newest", "Oldest", "Name A–Z", "Largest", "Top rated"],
+        )
+        self.sort_combo.grid(row=0, column=3, padx=(0, 8))
+        self.group_combo = ttk.Combobox(
+            toolbar, textvariable=self.group_var, state="readonly", width=12,
+            values=["None", "Project", "Shoot date"],
+        )
+        self.group_combo.grid(row=0, column=4, padx=(0, 8))
+        ttk.Button(toolbar, text="Select view", style="Ghost.TButton", command=self.select_visible).grid(row=0, column=5)
         self.project_combo.bind("<<ComboboxSelected>>", lambda _e: self.populate())
         self.status_combo.bind("<<ComboboxSelected>>", lambda _e: self.populate())
+        self.sort_combo.bind("<<ComboboxSelected>>", lambda _e: self.populate())
+        self.group_combo.bind("<<ComboboxSelected>>", lambda _e: self.populate())
 
         # Notebook: Shot Board + Catalog
         tabs = ttk.Notebook(center)
         tabs.grid(row=3, column=0, sticky="nsew")
+        self.tabs = tabs
+        tabs.bind("<<NotebookTabChanged>>", lambda _e: self.on_tab_changed())
 
         board = tk.Frame(tabs, bg=BG)
         board.rowconfigure(0, weight=1)
@@ -1169,6 +1223,17 @@ class VamosDesktopApp:
         self.root.bind("<F5>", lambda _e: self.sync_now())
         self.root.bind("<Control-u>", lambda _e: self.open_upload_dialog())
         self.root.bind("<F1>", lambda _e: self.show_help())
+        # Sync when the window regains focus (e.g. after you sent a clip on your phone).
+        self.root.bind("<FocusIn>", self._on_focus_in)
+
+    def _on_focus_in(self, event: tk.Event) -> None:
+        if event.widget is not self.root:
+            return
+        if not (self.auto_sync_var.get() and self._has_credentials()):
+            return
+        if time.time() - self._last_sync < FOCUS_SYNC_COOLDOWN:
+            return
+        self.sync_now()
 
     def _on_mousewheel(self, event: tk.Event) -> None:
         self.gallery_canvas.yview_scroll(int(-event.delta / 120), "units")
@@ -1290,7 +1355,20 @@ class VamosDesktopApp:
                 if query not in hay:
                     continue
             rows.append(row)
-        return rows
+        return self._sort_rows(rows)
+
+    def _sort_rows(self, rows: list[dict]) -> list[dict]:
+        mode = self.sort_var.get()
+        if mode == "Oldest":
+            return sorted(rows, key=lambda r: (r.get("uploaded_at") or r.get("created_at") or ""))
+        if mode == "Name A–Z":
+            return sorted(rows, key=lambda r: str(r.get("filename") or "").lower())
+        if mode == "Largest":
+            return sorted(rows, key=lambda r: int(r.get("size_bytes") or 0), reverse=True)
+        if mode == "Top rated":
+            return sorted(rows, key=lambda r: int(r.get("rating") or 0), reverse=True)
+        # Newest (default): most recent Telegram upload / catalog time first.
+        return sorted(rows, key=lambda r: (r.get("uploaded_at") or r.get("created_at") or ""), reverse=True)
 
     def populate(self) -> None:
         visible = self.filtered_assets()
@@ -1314,9 +1392,23 @@ class VamosDesktopApp:
                     row.get("status") or "",
                 ),
             )
-        self.render_board(visible)
+        if self._active_tab == "board":
+            self.render_board(visible)
+            self._board_dirty = False
+        else:
+            self._board_dirty = True
         self.status_text.set(f"Showing {len(visible)} of {len(self.assets)} assets")
         self.ensure_local_thumbnails()
+
+    def on_tab_changed(self) -> None:
+        try:
+            idx = self.tabs.index(self.tabs.select())
+        except tk.TclError:
+            return
+        self._active_tab = "board" if idx == 0 else "catalog"
+        if self._active_tab == "board" and self._board_dirty:
+            self.render_board(self.filtered_assets())
+            self._board_dirty = False
 
     # -- Shot board ---------------------------------------------------------
     def on_gallery_resize(self, event: tk.Event) -> None:
@@ -1324,7 +1416,10 @@ class VamosDesktopApp:
         columns = self.gallery_columns_for_width(event.width)
         if columns != self._gallery_columns:
             self._gallery_columns = columns
-            self.render_board(self.filtered_assets())
+            if self._active_tab == "board":
+                self.render_board(self.filtered_assets())
+            else:
+                self._board_dirty = True
 
     def gallery_columns_for_width(self, width: int) -> int:
         return max(1, min(5, max(1, width) // 250))
@@ -1350,54 +1445,92 @@ class VamosDesktopApp:
         for i in range(columns):
             self.gallery_frame.columnconfigure(i, weight=1, uniform="cards")
         selected = set(self.tree.selection())
-        for index, row in enumerate(rows[:120]):
-            sha = row["sha256"]
-            border = ACCENT if sha in selected else BORDER
-            card = tk.Frame(self.gallery_frame, bg=SURFACE, highlightthickness=2, highlightbackground=border, highlightcolor=border)
-            card.grid(row=index // columns, column=index % columns, sticky="nsew", padx=6, pady=6)
+        rows = rows[:160]
+        group_by = self.group_var.get()
+        grid_row = 0
+        if group_by in ("Project", "Shoot date"):
+            field = "project" if group_by == "Project" else "shoot_date"
+            groups: dict[str, list[dict]] = {}
+            for row in rows:
+                key = row.get(field) or ("No project" if field == "project" else "No date")
+                groups.setdefault(str(key), []).append(row)
+            for gkey, items in groups.items():
+                header = tk.Frame(self.gallery_frame, bg=BG)
+                header.grid(row=grid_row, column=0, columnspan=columns, sticky="ew", padx=6, pady=(12, 2))
+                tk.Label(header, text=f"{gkey}   ·   {len(items)}", bg=BG, fg=ACCENT, font=FONT_BD).pack(anchor="w")
+                grid_row += 1
+                col = 0
+                for row in items:
+                    self._make_card(row, grid_row, col, selected)
+                    col += 1
+                    if col >= columns:
+                        col = 0
+                        grid_row += 1
+                if col != 0:
+                    grid_row += 1
+        else:
+            col = 0
+            for row in rows:
+                self._make_card(row, grid_row, col, selected)
+                col += 1
+                if col >= columns:
+                    col = 0
+                    grid_row += 1
 
-            thumb = self._thumb_widget(card, row)
-            thumb.pack(fill="x")
+    def _make_card(self, row: dict, grid_row: int, col: int, selected: set) -> None:
+        sha = row["sha256"]
+        border = ACCENT if sha in selected else BORDER
+        card = tk.Frame(self.gallery_frame, bg=SURFACE, highlightthickness=2, highlightbackground=border, highlightcolor=border)
+        card.grid(row=grid_row, column=col, sticky="nsew", padx=6, pady=6)
 
-            body = tk.Frame(card, bg=SURFACE)
-            body.pack(fill="x", padx=10, pady=8)
-            name = row.get("filename") or "untitled"
-            tk.Label(body, text=name[:32], bg=SURFACE, fg=TEXT, font=FONT_BD, anchor="w").pack(anchor="w")
-            meta_parts = [
-                row.get("project") or "No project",
-                row.get("shoot_date") or "",
-                format_duration(row.get("duration_seconds")),
-                format_bytes(int(row.get("size_bytes") or 0)),
-            ]
-            meta = "  ·  ".join(str(p) for p in meta_parts if p)
-            tk.Label(body, text=meta[:42], bg=SURFACE, fg=MUTED, font=FONT_SM, anchor="w").pack(anchor="w", pady=(2, 0))
+        thumb = self._thumb_widget(card, row)
+        thumb.pack(fill="x")
 
-            badges = tk.Frame(body, bg=SURFACE)
-            badges.pack(anchor="w", pady=(6, 0))
-            qa = quality_badge_args(row.get("lossless"))
-            if qa:
-                make_badge(badges, qa[0], qa[1], qa[2]).pack(side="left", padx=(0, 4))
-            st = row.get("status") or "cataloged"
-            fg, bg = STATUS_BADGES.get(st, (MUTED, SURFACE_3))
-            make_badge(badges, st.upper(), fg, bg).pack(side="left", padx=(0, 4))
-            if sha in self.queued_shas:
-                make_badge(badges, "IN LIST", ACCENT_INK, ACCENT).pack(side="left")
+        body = tk.Frame(card, bg=SURFACE)
+        body.pack(fill="x", padx=10, pady=8)
+        name = row.get("filename") or "untitled"
+        tk.Label(body, text=name[:32], bg=SURFACE, fg=TEXT, font=FONT_BD, anchor="w").pack(anchor="w")
+        meta_parts = [
+            row.get("project") or "No project",
+            row.get("shoot_date") or "",
+            format_duration(row.get("duration_seconds")),
+            format_bytes(int(row.get("size_bytes") or 0)),
+        ]
+        meta = "  ·  ".join(str(p) for p in meta_parts if p)
+        tk.Label(body, text=meta[:42], bg=SURFACE, fg=MUTED, font=FONT_SM, anchor="w").pack(anchor="w", pady=(2, 0))
 
-            self._cards[sha] = {"frame": card}
-            self._bind_card(card, sha)
+        badges = tk.Frame(body, bg=SURFACE)
+        badges.pack(anchor="w", pady=(6, 0))
+        qa = quality_badge_args(row.get("lossless"))
+        if qa:
+            make_badge(badges, qa[0], qa[1], qa[2]).pack(side="left", padx=(0, 4))
+        st = row.get("status") or "cataloged"
+        fg, bg = STATUS_BADGES.get(st, (MUTED, SURFACE_3))
+        make_badge(badges, st.upper(), fg, bg).pack(side="left", padx=(0, 4))
+        if sha in self.queued_shas:
+            make_badge(badges, "IN LIST", ACCENT_INK, ACCENT).pack(side="left")
+
+        self._cards[sha] = {"frame": card}
+        self._bind_card(card, sha)
 
     def _thumb_widget(self, parent: tk.Widget, row: dict) -> tk.Widget:
         thumb = row.get("thumbnail_path")
         if thumb and Path(str(thumb)).exists() and Image is not None and ImageTk is not None:
-            try:
-                with Image.open(str(thumb)) as image:
-                    image.thumbnail((230, 130))
-                    photo = ImageTk.PhotoImage(image)
+            key = (str(thumb), 230, 130)
+            photo = self._thumb_cache.get(key)
+            if photo is None:
+                try:
+                    with Image.open(str(thumb)) as image:
+                        image.thumbnail((230, 130))
+                        photo = ImageTk.PhotoImage(image)
+                    if len(self._thumb_cache) > 800:
+                        self._thumb_cache.clear()
+                    self._thumb_cache[key] = photo
+                except Exception:
+                    photo = None
+            if photo is not None:
                 self.gallery_images.append(photo)
-                holder = tk.Label(parent, image=photo, bg=SURFACE_2)
-                return holder
-            except Exception:
-                pass
+                return tk.Label(parent, image=photo, bg=SURFACE_2)
         holder = tk.Frame(parent, bg=SURFACE_2, height=120)
         holder.pack_propagate(False)
         is_video = (row.get("codec") or "").startswith("video/") or str(row.get("filename") or "").lower().endswith((".mp4", ".mov", ".mkv", ".webm", ".avi", ".mts", ".mxf"))
@@ -1611,6 +1744,28 @@ class VamosDesktopApp:
     def show_help(self) -> None:
         HelpDialog(self)
 
+    def _ui_state_path(self) -> Path:
+        return resolve_data_path(self.base_dir, ".vamos-vault/ui-state.json")
+
+    def _load_ui_state(self) -> dict:
+        try:
+            return json.loads(self._ui_state_path().read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def welcome_hidden(self) -> bool:
+        return bool(self._load_ui_state().get("hide_welcome"))
+
+    def set_welcome_hidden(self, value: bool) -> None:
+        state = self._load_ui_state()
+        state["hide_welcome"] = bool(value)
+        try:
+            path = self._ui_state_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(state), encoding="utf-8")
+        except Exception:
+            pass
+
     def open_api_page(self) -> None:
         webbrowser.open(API_URL)
         self.status_text.set("Opened Telegram API page. Create an app, then paste api_id and api_hash.")
@@ -1686,6 +1841,7 @@ class VamosDesktopApp:
             self.open_setup_dialog()
             return
         self.sync_running = True
+        self._last_sync = time.time()
         self.status_text.set("Syncing Telegram...")
 
         def worker() -> None:
