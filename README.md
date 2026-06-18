@@ -4,6 +4,16 @@ A Telegram-backed video archive for vloggers, cinematographers, and YouTubers.
 It sends your original media files to a Telegram channel and keeps a local
 SQLite catalog that future tools can search, export, and build on.
 
+## Screenshots
+
+| Shot Board | Catalog |
+| --- | --- |
+| ![Shot Board](docs/screenshots/01-shot-board.png) | ![Catalog](docs/screenshots/02-catalog.png) |
+
+| Lossless guide (built in) | Upload originals |
+| --- | --- |
+| ![Lossless guide](docs/screenshots/03-lossless-guide.png) | ![Upload originals](docs/screenshots/04-upload.png) |
+
 ## The Quality Rule (zero compression)
 
 Telegram only keeps your **exact, full-quality file when it is sent as a File /
