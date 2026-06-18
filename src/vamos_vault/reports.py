@@ -210,6 +210,8 @@ tbody tr.expanded td.expand { color: var(--accent); }
 .b-remote-deleted { background: var(--bad-bg); color: var(--bad); }
 .b-dry-run { background: var(--warn-bg); color: var(--warn); }
 .b-cataloged { background: var(--neutral-bg); color: var(--neutral-ink); }
+.b-original { background: var(--good-bg); color: var(--good); }
+.b-compressed { background: var(--warn-bg); color: var(--warn); }
 
 a.tg { color: var(--accent); text-decoration: none; }
 a.tg:hover { text-decoration: underline; }
@@ -608,6 +610,14 @@ function rowFor(asset) {
   badge.className = "badge " + statusClass(asset.status);
   badge.textContent = text(asset.status);
   stTd.appendChild(badge);
+  if (asset.lossless != null && asset.lossless !== "") {
+    const q = document.createElement("span");
+    const original = int(asset.lossless) === 1;
+    q.className = "badge " + (original ? "b-original" : "b-compressed");
+    q.textContent = original ? "ORIGINAL" : "COMPRESSED";
+    q.style.marginLeft = "4px";
+    stTd.appendChild(q);
+  }
   tr.appendChild(stTd);
   const tg = document.createElement("td");
   if (asset.telegram_link) {
@@ -685,6 +695,7 @@ function detailPanel(asset) {
   const rh = document.createElement("h4"); rh.textContent = "Storage & links"; right.appendChild(rh);
   const grid2 = document.createElement("dl"); grid2.className = "detail-grid";
   const rows2 = [
+    ["Quality", asset.lossless == null || asset.lossless === "" ? "" : (int(asset.lossless) === 1 ? "Original (lossless)" : "Compressed by Telegram")],
     ["Size", asset.size_label || formatBytes(asset.size_bytes)],
     ["Duration", asset.duration_label || formatDuration(asset.duration_seconds)],
     ["Resolution", (asset.width && asset.height) ? asset.width + "x" + asset.height : ""],

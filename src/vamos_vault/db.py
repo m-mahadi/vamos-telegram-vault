@@ -48,6 +48,7 @@ class Asset:
     completed_at: str | None = None
     remote_deleted_at: str | None = None
     thumbnail_path: str | None = None
+    lossless: int | None = None
 
 
 class VaultDB:
@@ -99,6 +100,7 @@ class VaultDB:
                 completed_at TEXT,
                 remote_deleted_at TEXT,
                 thumbnail_path TEXT,
+                lossless INTEGER,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -144,6 +146,7 @@ class VaultDB:
             "completed_at": "ALTER TABLE assets ADD COLUMN completed_at TEXT",
             "remote_deleted_at": "ALTER TABLE assets ADD COLUMN remote_deleted_at TEXT",
             "thumbnail_path": "ALTER TABLE assets ADD COLUMN thumbnail_path TEXT",
+            "lossless": "ALTER TABLE assets ADD COLUMN lossless INTEGER",
         }
         for column, sql in migrations.items():
             if column not in existing:

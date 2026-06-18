@@ -4,12 +4,28 @@ A Telegram-backed video archive for vloggers, cinematographers, and YouTubers.
 It sends your original media files to a Telegram channel and keeps a local
 SQLite catalog that future tools can search, export, and build on.
 
-## The Quality Rule
+## The Quality Rule (zero compression)
 
-Vamos uploads camera originals as Telegram documents/files. That is deliberate:
-document mode preserves the original bytes and avoids Telegram preview/video
-compression. The main upload command does not expose a casual video-preview mode,
-because this vault is for master files, not degraded copies.
+Telegram only keeps your **exact, full-quality file when it is sent as a File /
+Document.** Sent as a normal gallery "video", your phone re-encodes it *before* it
+ever reaches Telegram — and nothing on a PC can recover that. So the one rule is:
+
+> **Always send clips as a FILE, not as a video.**
+
+Vamos makes this safe in three ways:
+
+1. **PC uploads are always lossless.** The in-app **Upload** button (and
+   `vamos-vault upload`) send everything as documents with `force_document=True`.
+2. **Phone uploads are guided.** The app's **?** / "How to send lossless" guide
+   shows the exact taps for iPhone and Android.
+3. **Everything is flagged.** On sync, Vamos detects whether each clip arrived as
+   a true original or was compressed, and tags it **ORIGINAL** (green) or
+   **COMPRESSED** (amber) across the Shot Board, Catalog, inspector, and HTML
+   report. A **Compressed** view in the sidebar lets you catch anything that
+   slipped through and re-send it as a file.
+
+The main upload path never exposes a casual video-preview mode, because this
+vault is for master files, not degraded copies.
 
 Practical meaning:
 
@@ -41,8 +57,14 @@ More detail: [docs/github-scan.md](docs/github-scan.md)
 
 ## What You Get
 
-- One Windows desktop app for setup, Telegram sync, browsing, metadata, download
-  list, and ZIP packaging.
+- One Windows desktop app (dark "editor" UI) for setup, Telegram sync, uploads,
+  browsing, metadata, download list, and ZIP packaging.
+- **In-app uploads:** add files or a whole shoot folder and archive originals to
+  Telegram with progress — always lossless.
+- **Lossless detection:** every clip is tagged ORIGINAL or COMPRESSED so you
+  always know whether Telegram kept your full-quality file.
+- **In-app guide** for sending lossless clips from iPhone/Android to Saved
+  Messages, plus a one-screen onboarding banner until Telegram is connected.
 - Guided Telegram setup inside the app, including a button that opens
   <https://my.telegram.org/apps>.
 - Auto-sync from Telegram into the local catalog while the app is open.

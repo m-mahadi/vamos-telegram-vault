@@ -24,6 +24,7 @@ class RemoteMedia:
     mime_type: str | None = None
     date: str | None = None
     thumbnail_path: str | None = None
+    lossless: bool | None = None
 
 
 def _message_link(message: object) -> str | None:
@@ -61,6 +62,21 @@ def _message_filename(message: object) -> str:
     return f"telegram-file-{message_id}"
 
 
+def _is_lossless_upload(message: object, file_obj: object) -> bool:
+    """True when Telegram is storing the original bytes (sent as a file/document).
+
+    Telegram only preserves a ``DocumentAttributeFilename`` when the media was
+    attached as a *file/document*. Gallery photos and "as video" sends are
+    re-encoded by the sending client before upload and arrive without an original
+    filename, so the original bytes are already gone. A plain ``photo`` message is
+    always a compressed thumbnail-style image.
+    """
+
+    if getattr(message, "photo", None) is not None:
+        return False
+    return bool(getattr(file_obj, "name", None))
+
+
 def _remote_media_from_message(message: object) -> RemoteMedia | None:
     file_obj = getattr(message, "file", None)
     if file_obj is None:
@@ -80,6 +96,7 @@ def _remote_media_from_message(message: object) -> RemoteMedia | None:
         height=getattr(file_obj, "height", None),
         mime_type=getattr(file_obj, "mime_type", None),
         date=date.isoformat(timespec="seconds") if date else None,
+        lossless=_is_lossless_upload(message, file_obj),
     )
 
 

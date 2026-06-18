@@ -12,8 +12,8 @@ from typing import Callable, Iterable
 
 from .config import load_config, resolve_data_path
 from .db import Asset, VaultDB
-from .media import normalize_tags, sha256_file
-from .telegram_client import download_file, list_remote_media
+from .media import build_caption, iter_media, normalize_tags, probe_media, sha256_file
+from .telegram_client import download_file, list_remote_media, send_file
 from .thumbnails import ensure_thumbnail_for_asset
 
 
@@ -117,6 +117,7 @@ def sync_remote_catalog(
                 telegram_link=item.link,
                 uploaded_at=item.date,
                 thumbnail_path=item.thumbnail_path,
+                lossless=None if item.lossless is None else (1 if item.lossless else 0),
             )
             row = db.upsert_asset(asset)
             rows.append(dict(row))
@@ -348,6 +349,154 @@ def create_download_package(
         metadata_json=metadata_json,
         rows=packaged_rows,
     )
+
+
+def upload_paths(
+    config: dict,
+    base_dir: Path,
+    paths: list[Path],
+    *,
+    project: str | None = None,
+    shoot_date: str | None = None,
+    camera: str | None = None,
+    lens: str | None = None,
+    tags: str | None = None,
+    asset_kind: str = "original",
+    scene: str | None = None,
+    location: str | None = None,
+    people: str | None = None,
+    rights: str | None = None,
+    rating: int | None = None,
+    favorite: bool = False,
+    youtube_status: str | None = None,
+    notes: str | None = None,
+    dry_run: bool = False,
+    recursive: bool = True,
+    force: bool = False,
+    progress_callback: ProgressCallback | None = None,
+    status_callback: StatusCallback | None = None,
+) -> list[dict]:
+    """Catalog and upload originals to Telegram as documents.
+
+    Mirrors the ``vamos-vault upload`` CLI command but reports progress through
+    callbacks so the desktop app can drive it on a background thread. Returns one
+    row dict per processed file (skipped duplicates included).
+    """
+
+    files = iter_media(paths, recursive=recursive)
+    if not files:
+        if status_callback:
+            status_callback("No supported media files found.")
+        return []
+
+    max_size = int(config["vault"]["max_file_bytes"])
+    caption_limit = int(config["vault"].get("caption_limit", 1024))
+    normalized_tags = normalize_tags(tags)
+    db = db_from_config(config, base_dir)
+    rows: list[dict] = []
+    try:
+        for file_path in files:
+            size = file_path.stat().st_size
+            if size > max_size:
+                if status_callback:
+                    status_callback(f"Skipping oversized file: {file_path.name}")
+                continue
+
+            digest = sha256_file(file_path)
+            existing = db.find_by_sha256(digest)
+            if existing and existing["status"] == "uploaded" and not force:
+                if status_callback:
+                    status_callback(f"Already uploaded, skipping: {file_path.name}")
+                rows.append(dict(existing))
+                continue
+
+            probe = probe_media(file_path)
+            asset = Asset(
+                path=str(file_path.resolve()),
+                filename=file_path.name,
+                size_bytes=size,
+                sha256=digest,
+                content_sha256=digest,
+                asset_kind=asset_kind,
+                duration_seconds=probe.duration_seconds,
+                width=probe.width,
+                height=probe.height,
+                codec=probe.codec,
+                project=project,
+                shoot_date=shoot_date,
+                camera=camera,
+                lens=lens,
+                tags=normalized_tags,
+                scene=scene,
+                location=location,
+                people=people,
+                rights=rights,
+                rating=rating,
+                favorite=1 if favorite else 0,
+                youtube_status=youtube_status,
+                notes=notes,
+                status="dry-run" if dry_run else "cataloged",
+                lossless=1,
+            )
+            row = dict(db.upsert_asset(asset))
+            thumbnail_path = ensure_thumbnail_for_asset(base_dir, row, source_path=file_path)
+            if thumbnail_path:
+                row = dict(db.set_thumbnail_path(digest, thumbnail_path))
+            if dry_run:
+                rows.append(row)
+                continue
+
+            caption = build_caption(
+                filename=file_path.name,
+                size_bytes=size,
+                sha256=digest,
+                asset_kind=asset_kind,
+                project=project,
+                shoot_date=shoot_date,
+                camera=camera,
+                lens=lens,
+                tags=normalized_tags,
+                scene=scene,
+                location=location,
+                people=people,
+                rights=rights,
+                rating=rating,
+                favorite=favorite,
+                youtube_status=youtube_status,
+                notes=notes,
+                duration_seconds=probe.duration_seconds,
+                limit=caption_limit,
+            )
+            if status_callback:
+                status_callback(f"Uploading original: {file_path.name}")
+
+            def on_progress(sent: int, total: int, _name: str = file_path.name) -> None:
+                if progress_callback:
+                    progress_callback(_name, sent, total)
+
+            thumb = row.get("thumbnail_path")
+            message_id, link = asyncio.run(
+                send_file(
+                    config,
+                    base_dir,
+                    file_path,
+                    caption=caption,
+                    thumb_path=Path(str(thumb)) if thumb else None,
+                    progress_callback=on_progress,
+                )
+            )
+            row = dict(
+                db.mark_uploaded(
+                    digest,
+                    chat=config["telegram"]["target"],
+                    message_id=message_id,
+                    link=link,
+                )
+            )
+            rows.append(row)
+    finally:
+        db.close()
+    return rows
 
 
 def current_config_and_db(base_dir: Path) -> tuple[dict, VaultDB]:

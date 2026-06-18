@@ -5,7 +5,7 @@ from unittest.mock import patch
 import zipfile
 
 from vamos_vault.db import Asset, VaultDB
-from vamos_vault.workflows import create_download_package, create_remote_preview_thumbnail
+from vamos_vault.workflows import create_download_package, create_remote_preview_thumbnail, upload_paths
 
 
 class WorkflowTests(unittest.TestCase):
@@ -106,6 +106,56 @@ class WorkflowTests(unittest.TestCase):
                 self.assertTrue(updated["thumbnail_path"].endswith("thumb.jpg"))
             finally:
                 db.close()
+
+
+    def test_upload_paths_catalogs_and_uploads_originals(self) -> None:
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            clip = base / "clip.mp4"
+            clip.write_bytes(b"original camera bytes")
+            config = {
+                "telegram": {"target": "me"},
+                "vault": {"database": ".vamos-vault/vault.db", "max_file_bytes": 10_000, "caption_limit": 1024},
+            }
+            captured: dict[str, object] = {}
+
+            def fake_send(cfg, base_dir, file_path, *, caption, thumb_path=None, progress_callback=None):
+                captured["caption"] = caption
+                if progress_callback:
+                    progress_callback(100, 100)
+                return 555, "https://t.me/c/1/555"
+
+            with patch("vamos_vault.workflows.send_file", side_effect=fake_send), patch(
+                "vamos_vault.workflows.ensure_thumbnail_for_asset", side_effect=lambda *a, **k: None
+            ):
+                rows = upload_paths(config, base, [clip], project="Vlog 7", tags="street,day")
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["status"], "uploaded")
+            self.assertEqual(rows[0]["telegram_message_id"], 555)
+            self.assertEqual(rows[0]["project"], "Vlog 7")
+            self.assertIn("VAMOS VAULT", str(captured["caption"]))
+
+    def test_upload_paths_dry_run_does_not_upload(self) -> None:
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            clip = base / "clip.mov"
+            clip.write_bytes(b"bytes")
+            config = {
+                "telegram": {"target": "me"},
+                "vault": {"database": ".vamos-vault/vault.db", "max_file_bytes": 10_000, "caption_limit": 1024},
+            }
+
+            def boom(*a, **k):
+                raise AssertionError("send_file must not run during dry-run")
+
+            with patch("vamos_vault.workflows.send_file", side_effect=boom), patch(
+                "vamos_vault.workflows.ensure_thumbnail_for_asset", side_effect=lambda *a, **k: None
+            ):
+                rows = upload_paths(config, base, [clip], dry_run=True)
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["status"], "dry-run")
 
 
 if __name__ == "__main__":
