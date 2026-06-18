@@ -1,0 +1,12 @@
+{
+  "telegram": {
+    "target": "me",
+    "session_name": "vamos.session"
+  },
+  "vault": {
+    "database": ".vamos-vault/vault.db",
+    "caption_limit": 1024,
+    "max_file_bytes": 2147483648,
+    "send_as_document": true
+  }
+}

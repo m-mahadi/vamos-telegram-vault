@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vamos-telegram-vault"
+version = "0.1.0"
+description = "Telegram-backed media archive CLI for vloggers and cinematographers."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Monir and Codex" }]
+dependencies = [
+  "imageio-ffmpeg>=0.5.1",
+  "Pillow>=10.4.0",
+  "python-dotenv>=1.0.1",
+  "rich>=13.7.1",
+  "telethon>=1.36.0",
+  "typer>=0.12.3"
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+build = ["pyinstaller>=6.0"]
+
+[project.scripts]
+vamos-vault = "vamos_vault.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
